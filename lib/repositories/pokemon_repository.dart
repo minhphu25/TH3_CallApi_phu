@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:pokemon_app/model/pokemon.dart';
 import 'package:pokemon_app/model/evolution.dart';
@@ -15,116 +16,69 @@ class PokemonRepository {
 
   Future<List<Pokemon>> getPokemons() async {
     try {
-      // Simulate error for testing (set _testErrorMode = true)
-      if (_testErrorMode) {
-        await Future.delayed(Duration(seconds: 2));
-        throw Exception('Network connection failed (Test Mode)');
-      }
+      // Load from local JSON file (optimized with 50 Pokemon)
+      final String jsonString = await rootBundle.loadString('db/data.json');
+      final Map<String, dynamic> jsonData = jsonDecode(jsonString);
+      final List<dynamic> pokemonData = jsonData['pokemon'] as List;
 
-      // Fetch list of Pokemon (ALL Generations - 1025 Pokemon)
-      // This will take longer to load (~30-45 seconds)
-      final listResponse = await http
-          .get(
-            Uri.parse('$baseUrl/pokemon?limit=1025&offset=0'),
-          )
-          .timeout(Duration(seconds: 15));
+      // Map JSON data to Pokemon objects
+      List<Pokemon> pokemonList = pokemonData.map((data) {
+        return _mapJsonToPokemon(data as Map<String, dynamic>);
+      }).toList();
 
-      if (listResponse.statusCode != 200) {
-        throw Exception(
-            'Failed to load Pokemon list: ${listResponse.statusCode}');
-      }
-
-      final listData = jsonDecode(listResponse.body);
-      final results = listData['results'] as List;
-
-      // Fetch details for all Pokemon in parallel (batch of 50 at a time)
-      List<Pokemon> pokemonList = [];
-
-      // Process in larger batches for faster loading
-      final batchSize = 50;
-      for (int i = 0; i < results.length; i += batchSize) {
-        final end =
-            (i + batchSize < results.length) ? i + batchSize : results.length;
-        final batch = results.sublist(i, end);
-
-        // Load batch in parallel
-        final batchFutures = batch.map((result) async {
-          try {
-            final pokemonUrl = result['url'] as String;
-            final detailResponse = await http
-                .get(Uri.parse(pokemonUrl))
-                .timeout(Duration(seconds: 5));
-
-            if (detailResponse.statusCode == 200) {
-              final pokemonData = jsonDecode(detailResponse.body);
-              return _mapPokeApiToPokemon(pokemonData);
-            }
-          } catch (e) {
-            print('Error loading Pokemon: $e');
-          }
-          return null;
-        }).toList();
-
-        final batchResults = await Future.wait(batchFutures);
-        pokemonList.addAll(batchResults.whereType<Pokemon>());
-
-        // Progress feedback
-        print('Loaded ${pokemonList.length} of ${results.length} Pokemon...');
-      }
-
-      // Sort by ID to maintain order
-      pokemonList.sort((a, b) => a.id.compareTo(b.id));
-
+      print('Loaded ${pokemonList.length} Pokemon from local database');
       return pokemonList;
     } catch (e) {
-      throw Exception('Error fetching Pokemon data: $e');
+      throw Exception('Error loading Pokemon data: $e');
     }
   }
 
-  // Map PokeAPI data to our Pokemon model
-  Pokemon _mapPokeApiToPokemon(Map<String, dynamic> data) {
+  // Map local JSON data to our Pokemon model
+  Pokemon _mapJsonToPokemon(Map<String, dynamic> data) {
     final id = data['id'] as int;
+    final num = data['num'] as String;
     final name = data['name'] as String;
-
-    // Get types
-    final types = (data['types'] as List)
-        .map((t) => (t['type']['name'] as String).capitalize())
-        .toList();
-
-    // Get image (official artwork or front sprite)
-    final img = data['sprites']['other']['official-artwork']['front_default'] ??
-        data['sprites']['front_default'] ??
-        'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/$id.png';
-
-    // Get weaknesses from types (simplified)
-    final weaknesses = _getWeaknesses(types);
-
-    // Get evolutions
-    final evolutions = _getEvolutions(id);
+    final img = data['img'] as String;
+    final type = List<String>.from(data['type'] as List);
+    final height = data['height'] as String;
+    final weight = data['weight'] as String;
+    final weaknesses = List<String>.from(data['weaknesses'] as List? ?? []);
 
     return Pokemon(
       id: id,
-      num: id.toString().padLeft(3, '0'),
-      name: name.capitalize(),
+      num: num,
+      name: name,
       img: img,
-      type: types,
-      height: '${(data['height'] / 10).toStringAsFixed(2)} m',
-      weight: '${(data['weight'] / 10).toStringAsFixed(1)} kg',
-      candy: '${name.capitalize()} Candy',
-      candyCount: 25,
-      egg: 'Not in Eggs',
-      spawnChance: '0',
-      avgSpawns: '0',
-      spawnTime: 'N/A',
-      multipliers: null,
+      type: type,
+      height: height,
+      weight: weight,
+      candy: data['candy'] as String? ?? '$name Candy',
+      candyCount: data['candy_count'] as int? ?? 25,
+      egg: data['egg'] as String? ?? 'Not in Eggs',
+      spawnChance: data['spawn_chance']?.toString() ?? '0',
+      avgSpawns: data['avg_spawns']?.toString() ?? '0',
+      spawnTime: data['spawn_time'] as String? ?? 'N/A',
+      multipliers: data['multipliers'] != null
+          ? List<double>.from(data['multipliers'] as List)
+          : null,
       weaknesses: weaknesses,
-      nextEvolution: evolutions['next'],
-      prevEvolution: evolutions['prev'],
+      nextEvolution: data['next_evolution'] != null
+          ? List<Evolution>.from((data['next_evolution'] as List).map((e) =>
+              Evolution(
+                  num: e['num'] as String,
+                  name: e['name'] as String,
+                  requiredCandy: e['required_candy'] as int?)))
+          : null,
+      prevEvolution: data['prev_evolution'] != null
+          ? List<Evolution>.from((data['prev_evolution'] as List).map((e) =>
+              Evolution(
+                  num: e['num'] as String,
+                  name: e['name'] as String,
+                  requiredCandy: e['required_candy'] as int?)))
+          : null,
     );
   }
-
-  // Get evolution data based on Pokemon ID
-  Map<String, List<Evolution>?> _getEvolutions(int id) {
+}
     List<Evolution>? nextEvolution;
     List<Evolution>? prevEvolution;
 

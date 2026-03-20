@@ -16,7 +16,11 @@ class PokemonBloc extends Bloc<PokemonEvent, PokemonState> {
   PokemonBloc(this._pokemonRepository) : super(PokemonInitial());
 
   Pokemon? getPokemonByNumber(String number) {
-    return _pokemonList.firstWhere((pokemon) => pokemon.num == number);
+    try {
+      return _pokemonList.firstWhere((pokemon) => pokemon.num == number);
+    } catch (e) {
+      return null;
+    }
   }
 
   // Generation ranges (Pokémon ID ranges)
